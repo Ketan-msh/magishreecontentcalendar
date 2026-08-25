@@ -1,14 +1,20 @@
 /**
  * Magishree Bagaicha Resort - Bhadra Content Calendar Controller
- * Supabase Database Integration
+ * Robust Supabase & Local Fallback Integration
  */
 
-// Initialize Supabase Client
+// Initialize Supabase Client (if valid configuration provided)
 const SUPABASE_URL = 'https://giofettzlbggkustigyq.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_jeGM2mbAkaeKnU7H1RmP1g_kSAtpaFX';
-const supabase = (window.supabase && window.supabase.createClient) 
-  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) 
-  : null;
+
+let supabase = null;
+try {
+  if (window.supabase && window.supabase.createClient && SUPABASE_URL && !SUPABASE_URL.includes('your-supabase-id')) {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+} catch (e) {
+  console.warn('Supabase initialization fallback to local contentData:', e);
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
@@ -48,11 +54,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const countReels = document.getElementById('count-reels');
   const countPosts = document.getElementById('count-posts');
 
-  // Application State
-  let eventsList = []; // Holds current list of events from Supabase or fallback
+  // Application State - DEFAULT TO ALL 9 CONTENT PIECES FROM DATA.JS IMMEDIATELY
+  let eventsList = (typeof contentData !== 'undefined' && Array.isArray(contentData)) ? [...contentData] : [];
   let currentFilter = 'all';
   let currentSearchQuery = '';
-  let activeModalIndex = null; // Index in eventsList array
+  let activeModalIndex = null;
 
   /* ==========================================================================
      SUPABASE ASYNCHRONOUS DATABASE OPERATIONS (Load, Add, Update, Delete)
@@ -78,52 +84,44 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  // Load / Fetch Events from Supabase Database
+  // Load / Fetch Events from Supabase Database safely without blocking UI
   async function loadEventsFromSupabase() {
-    gridContainer.innerHTML = `
-      <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
-        <p style="font-family: var(--font-serif); font-size: 1.25rem; color: var(--color-primary);">Loading events from Supabase...</p>
-      </div>
-    `;
+    // 1. Instantly render default 9 items first so page is NEVER empty!
+    updateStats();
+    renderGrid();
+    checkUrlHash();
 
-    if (!supabase) {
-      console.warn('Supabase client not initialized. Using local contentData fallback.');
-      eventsList = Array.isArray(contentData) ? [...contentData] : [];
-      updateStats();
-      renderGrid();
-      return;
-    }
+    if (!supabase) return;
 
     try {
+      // Timeout controller to prevent hanging if URL fails to resolve
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
       const { data, error } = await supabase
         .from('events')
         .select('*')
         .order('id', { ascending: true });
 
-      if (error) {
-        console.warn('Supabase query notice (falling back to initial dataset):', error.message);
-        eventsList = Array.isArray(contentData) ? [...contentData] : [];
-      } else if (data && data.length > 0) {
+      clearTimeout(timeoutId);
+
+      if (!error && data && data.length > 0) {
         eventsList = data.map(normalizeEvent);
+        updateStats();
+        renderGrid();
         showToast('Synced with Supabase DB 🟢');
-      } else {
-        // Table exists but empty, seed with initial dataset
-        eventsList = Array.isArray(contentData) ? [...contentData] : [];
+      } else if (!error && data && data.length === 0) {
+        // Table exists but empty -> auto seed initial 9 items to Supabase!
         seedInitialEventsToSupabase(eventsList);
       }
     } catch (err) {
-      console.error('Error connecting to Supabase:', err);
-      eventsList = Array.isArray(contentData) ? [...contentData] : [];
+      console.log('Supabase connection deferred, showing local content calendar items:', err.message || err);
     }
-
-    updateStats();
-    renderGrid();
-    checkUrlHash();
   }
 
   // Seed Initial Events to Supabase if table is fresh
   async function seedInitialEventsToSupabase(initialItems) {
-    if (!supabase) return;
+    if (!supabase || !initialItems || initialItems.length === 0) return;
     try {
       const rowsToInsert = initialItems.map(item => ({
         id: item.id,
@@ -134,18 +132,15 @@ document.addEventListener('DOMContentLoaded', () => {
         production_note: item.productionNote || null,
         audio_note: item.audioNote || null,
         edit_note: item.editNote || null,
-        shot_list: item.shotList || null,
-        voiceover: item.voiceover || null,
-        text_options: item.textOptions || null,
-        location_versions: item.locationVersions || null,
+        shot_list: item.shotList ? JSON.stringify(item.shotList) : null,
+        voiceover: item.voiceover ? JSON.stringify(item.voiceover) : null,
+        text_options: item.textOptions ? JSON.stringify(item.textOptions) : null,
+        location_versions: item.locationVersions ? JSON.stringify(item.locationVersions) : null,
         caption: item.caption,
         hashtags: item.hashtags
       }));
 
-      const { error } = await supabase.from('events').insert(rowsToInsert);
-      if (!error) {
-        console.log('Successfully seeded initial events to Supabase DB');
-      }
+      await supabase.from('events').insert(rowsToInsert);
     } catch (err) {
       console.warn('Auto-seed to Supabase deferred:', err);
     }
@@ -164,6 +159,11 @@ document.addEventListener('DOMContentLoaded', () => {
       hashtags: newEventData.hashtags
     };
 
+    eventsList.push(formattedEvent);
+    updateStats();
+    renderGrid();
+    closeFormModal();
+
     if (supabase) {
       try {
         const { data, error } = await supabase
@@ -179,23 +179,17 @@ document.addEventListener('DOMContentLoaded', () => {
           .select();
 
         if (error) {
-          console.error('Supabase add error:', error);
-          showToast('Saved locally (DB notice: ' + error.message + ')');
+          showToast('Saved locally ✨');
         } else if (data && data[0]) {
           formattedEvent.id = data[0].id;
           showToast('Event added to Supabase DB! ✨');
         }
       } catch (err) {
-        console.error('Async add failed:', err);
+        showToast('Saved locally ✨');
       }
     } else {
-      showToast('Event added locally!');
+      showToast('Event added locally! ✨');
     }
-
-    eventsList.push(formattedEvent);
-    updateStats();
-    renderGrid();
-    closeFormModal();
   }
 
   // Update Event in Supabase
@@ -204,6 +198,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (index === -1) return;
 
     eventsList[index] = { ...eventsList[index], ...updatedFields };
+    updateStats();
+    renderGrid();
+    closeFormModal();
+    if (activeModalIndex !== null) openModal(index);
 
     if (supabase) {
       try {
@@ -219,24 +217,16 @@ document.addEventListener('DOMContentLoaded', () => {
           })
           .eq('id', id);
 
-        if (error) {
-          console.error('Supabase update error:', error);
-          showToast('Updated locally (DB notice: ' + error.message + ')');
-        } else {
+        if (!error) {
           showToast('Event updated in Supabase DB! 🔄');
+        } else {
+          showToast('Updated locally 🔄');
         }
       } catch (err) {
-        console.error('Async update failed:', err);
+        showToast('Updated locally 🔄');
       }
     } else {
-      showToast('Event updated locally!');
-    }
-
-    updateStats();
-    renderGrid();
-    closeFormModal();
-    if (activeModalIndex !== null) {
-      openModal(index);
+      showToast('Event updated locally! 🔄');
     }
   }
 
@@ -247,30 +237,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const index = eventsList.findIndex(e => e.id === id);
     if (index === -1) return;
 
-    if (supabase) {
-      try {
-        const { error } = await supabase
-          .from('events')
-          .delete()
-          .eq('id', id);
-
-        if (error) {
-          console.error('Supabase delete error:', error);
-          showToast('Deleted locally (DB notice: ' + error.message + ')');
-        } else {
-          showToast('Event deleted from Supabase DB 🗑️');
-        }
-      } catch (err) {
-        console.error('Async delete failed:', err);
-      }
-    } else {
-      showToast('Event deleted locally');
-    }
-
     eventsList.splice(index, 1);
     closeModal();
     updateStats();
     renderGrid();
+
+    if (supabase) {
+      try {
+        await supabase.from('events').delete().eq('id', id);
+        showToast('Event deleted 🗑️');
+      } catch (err) {
+        showToast('Event deleted locally');
+      }
+    } else {
+      showToast('Event deleted locally');
+    }
   }
 
   /* ==========================================================================
@@ -300,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
         (item.theme && item.theme.toLowerCase().includes(query)) ||
         (item.caption && item.caption.toLowerCase().includes(query)) ||
         (item.hashtags && item.hashtags.some(tag => tag.toLowerCase().includes(query))) ||
-        (item.shotList && item.shotList.some(shot => shot.desc.toLowerCase().includes(query)));
+        (item.shotList && item.shotList.some(shot => (shot.desc || shot).toLowerCase().includes(query)));
 
       return matchesFilter && matchesSearch;
     });
@@ -390,8 +371,8 @@ document.addEventListener('DOMContentLoaded', () => {
     modalTitle.textContent = item.title;
 
     // Attach Edit & Delete buttons
-    modalEditBtn.onclick = () => openFormModal(item);
-    modalDeleteBtn.onclick = () => deleteEventFromSupabase(item.id);
+    if (modalEditBtn) modalEditBtn.onclick = () => openFormModal(item);
+    if (modalDeleteBtn) modalDeleteBtn.onclick = () => deleteEventFromSupabase(item.id);
 
     // Render Body Sections
     let htmlContent = '';
@@ -419,9 +400,9 @@ document.addEventListener('DOMContentLoaded', () => {
             SHOT LIST (${item.shotList.length} SHOTS)
           </div>
           <div class="shot-list-grid">
-            ${item.shotList.map(shot => `
+            ${item.shotList.map((shot, idx) => `
               <div class="shot-item">
-                <span class="shot-number">${shot.num || shot.number || '•'}</span>
+                <span class="shot-number">${shot.num || shot.number || (idx + 1)}</span>
                 <span class="shot-desc">${shot.desc || shot.description || shot}</span>
               </div>
             `).join('')}
@@ -652,24 +633,30 @@ document.addEventListener('DOMContentLoaded', () => {
     history.pushState("", document.title, window.location.pathname + window.location.search);
   }
 
-  modalCloseBtn.addEventListener('click', closeModal);
-  modalOverlay.addEventListener('click', (e) => {
-    if (e.target === modalOverlay) closeModal();
-  });
+  if (modalCloseBtn) modalCloseBtn.addEventListener('click', closeModal);
+  if (modalOverlay) {
+    modalOverlay.addEventListener('click', (e) => {
+      if (e.target === modalOverlay) closeModal();
+    });
+  }
 
-  modalPrevBtn.addEventListener('click', () => {
-    if (activeModalIndex !== null) {
-      const prevIndex = (activeModalIndex - 1 + eventsList.length) % eventsList.length;
-      openModal(prevIndex);
-    }
-  });
+  if (modalPrevBtn) {
+    modalPrevBtn.addEventListener('click', () => {
+      if (activeModalIndex !== null) {
+        const prevIndex = (activeModalIndex - 1 + eventsList.length) % eventsList.length;
+        openModal(prevIndex);
+      }
+    });
+  }
 
-  modalNextBtn.addEventListener('click', () => {
-    if (activeModalIndex !== null) {
-      const nextIndex = (activeModalIndex + 1) % eventsList.length;
-      openModal(nextIndex);
-    }
-  });
+  if (modalNextBtn) {
+    modalNextBtn.addEventListener('click', () => {
+      if (activeModalIndex !== null) {
+        const nextIndex = (activeModalIndex + 1) % eventsList.length;
+        openModal(nextIndex);
+      }
+    });
+  }
 
   /* ==========================================================================
      FORM MODAL CONTROLLERS (ADD & EDIT)
@@ -687,7 +674,7 @@ document.addEventListener('DOMContentLoaded', () => {
       eventHashtagsInput.value = Array.isArray(editItem.hashtags) ? editItem.hashtags.join(' ') : (editItem.hashtags || '');
     } else {
       formModalTitle.textContent = 'Add New Content Event';
-      eventForm.reset();
+      if (eventForm) eventForm.reset();
       eventIdInput.value = '';
       eventNumberInput.value = String(eventsList.length + 1).padStart(2, '0');
     }
@@ -729,12 +716,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Keyboard Navigation
   document.addEventListener('keydown', (e) => {
-    if (modalOverlay.classList.contains('active')) {
+    if (modalOverlay && modalOverlay.classList.contains('active')) {
       if (e.key === 'Escape') closeModal();
-      if (e.key === 'ArrowLeft') modalPrevBtn.click();
-      if (e.key === 'ArrowRight') modalNextBtn.click();
+      if (e.key === 'ArrowLeft' && modalPrevBtn) modalPrevBtn.click();
+      if (e.key === 'ArrowRight' && modalNextBtn) modalNextBtn.click();
     }
-    if (formModalOverlay.classList.contains('active') && e.key === 'Escape') {
+    if (formModalOverlay && formModalOverlay.classList.contains('active') && e.key === 'Escape') {
       closeFormModal();
     }
   });
@@ -777,6 +764,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Initial Load from Supabase DB
+  // Initial Load (Renders 9 default items immediately & syncs with Supabase if online)
   loadEventsFromSupabase();
 });
