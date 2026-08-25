@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bhadra Content Calendar — Magishree Bagaicha Resort</title>
+  <meta name="description" content="Internal social media content calendar and production reference for Magishree Bagaicha Resort, Godavari, Kathmandu — Bhadra Content Plan.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌿</text></svg>">
+</head>
+<body>
+
+  <!-- Header Section -->
+  <header class="site-header">
+    <div class="container">
+      <div class="header-top">
+        <div class="brand-badge">
+          <svg viewBox="0 0 24 24"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+          MAGISHREE BAGAICHA RESORT &bull; GODAVARI
+        </div>
+        <div class="agency-tag">
+          <span>Agency & Client Production Reference</span>
+          <span>&bull;</span>
+          <strong>Month of Bhadra</strong>
+        </div>
+      </div>
+
+      <h1 class="main-title">Bhadra Content Calendar</h1>
+      <p class="main-subtitle">
+        A calm, editorial lookbook and production reference for Magishree Bagaicha Resort, Godavari. 
+        Featuring 9 sequenced content pieces (4 Reels & 5 Posts) built around unhurried garden imagery, natural light, and authentic local flavor.
+      </p>
+
+      <!-- Meta Summary Bar -->
+      <div class="meta-summary-bar">
+        <div class="stat-pills">
+          <div class="stat-item">
+            <span class="stat-number" id="count-all">9</span>
+            <span>Total Content Pieces</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-item">
+            <span class="stat-number" style="background-color: var(--color-primary);" id="count-reels">4</span>
+            <span>Reels (Video)</span>
+          </div>
+          <div class="stat-divider"></div>
+          <div class="stat-item">
+            <span class="stat-number" style="background-color: var(--color-terracotta);" id="count-posts">5</span>
+            <span>Posts (Photos / Carousels)</span>
+          </div>
+        </div>
+
+        <div style="font-size: 0.8125rem; color: var(--color-text-muted);">
+          <span>📅 Schedule: Flexible Sequence (Mid-Aug &ndash; Mid-Sept)</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="container">
+    <!-- Controls & Filters -->
+    <div class="controls-bar">
+      <div class="filter-tabs">
+        <button class="tab-btn active" data-filter="all">All Content (9)</button>
+        <button class="tab-btn" data-filter="reels">🎥 Reels (4)</button>
+        <button class="tab-btn" data-filter="posts">📸 Posts (5)</button>
+      </div>
+
+      <div class="search-box">
+        <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="search-input" class="search-input" placeholder="Search by title, theme, shot, or hashtag...">
+      </div>
+    </div>
+
+    <!-- 9-Card Main Grid View -->
+    <div class="content-grid" id="content-grid">
+      <!-- Dynamically populated via app.js -->
+    </div>
+  </main>
+
+  <!-- Detail View Modal -->
+  <div class="modal-overlay" id="modal-overlay" aria-hidden="true" role="dialog">
+    <div class="modal-container">
+      
+      <!-- Modal Sticky Header -->
+      <div class="modal-header">
+        <div class="modal-header-info">
+          <div class="modal-preheader">
+            <span class="card-index" id="modal-index-badge">CONTENT 01 OF 09</span>
+            <span class="card-badge" id="modal-type-badge">REEL</span>
+          </div>
+          <h2 class="modal-title" id="modal-title">Drone Property Reveal</h2>
+        </div>
+
+        <div class="modal-actions">
+          <button class="modal-nav-btn" id="modal-prev" title="Previous Content (Left Arrow)" aria-label="Previous">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <button class="modal-nav-btn" id="modal-next" title="Next Content (Right Arrow)" aria-label="Next">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+          <button class="modal-close-btn" id="modal-close" title="Close Brief (Esc)" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Modal Body Content -->
+      <div class="modal-body" id="modal-body-content">
+        <!-- Dynamically rendered via app.js -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="container site-footer">
+    <div>
+      <strong>Magishree Bagaicha Resort</strong> &mdash; Godavari, Kathmandu, Nepal
+    </div>
+    <div>
+      Bhadra Content Calendar Dashboard &bull; Designed for Internal Agency & Client Workflow
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
