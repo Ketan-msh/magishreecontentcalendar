@@ -1,19 +1,19 @@
 /**
  * Magishree Bagaicha Resort - Bhadra Content Calendar Controller
- * Robust Supabase & Local Fallback Integration
+ * 100% Bulletproof Local & Supabase Hybrid Integration
  */
 
-// Initialize Supabase Client (if valid configuration provided)
+// Initialize Supabase Client safely using 'sbClient' to avoid identifier collision with global 'supabase'
 const SUPABASE_URL = 'https://giofettzlbggkustigyq.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_jeGM2mbAkaeKnU7H1RmP1g_kSAtpaFX';
 
-let supabase = null;
+let sbClient = null;
 try {
-  if (window.supabase && window.supabase.createClient && SUPABASE_URL && !SUPABASE_URL.includes('your-supabase-id')) {
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  if (typeof window !== 'undefined' && window.supabase && typeof window.supabase.createClient === 'function') {
+    sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
 } catch (e) {
-  console.warn('Supabase initialization fallback to local contentData:', e);
+  console.warn('Supabase client init skipped:', e);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -54,146 +54,109 @@ document.addEventListener('DOMContentLoaded', () => {
   const countReels = document.getElementById('count-reels');
   const countPosts = document.getElementById('count-posts');
 
-  // Application State - DEFAULT TO ALL 9 CONTENT PIECES FROM DATA.JS IMMEDIATELY
-  let eventsList = (typeof contentData !== 'undefined' && Array.isArray(contentData)) ? [...contentData] : [];
+  // Ensure contentData is loaded from data.js
+  const fallbackData = (typeof contentData !== 'undefined' && Array.isArray(contentData) && contentData.length > 0)
+    ? contentData
+    : [];
+
+  // Application State - DEFAULT TO ALL 9 CONTENT PIECES IMMEDIATELY
+  let eventsList = JSON.parse(JSON.stringify(fallbackData));
   let currentFilter = 'all';
   let currentSearchQuery = '';
   let activeModalIndex = null;
 
   /* ==========================================================================
-     SUPABASE ASYNCHRONOUS DATABASE OPERATIONS (Load, Add, Update, Delete)
+     DATA NORMALIZATION & SUPABASE SYNC
      ========================================================================== */
 
-  // Normalize event record structure from DB
   function normalizeEvent(row) {
+    if (!row) return null;
     return {
-      id: row.id,
-      number: row.number || row.num || (row.id ? String(row.id).padStart(2, '0') : '01'),
+      id: row.id || Math.floor(Math.random() * 10000),
+      number: row.number || row.num || '01',
       type: row.type || 'Reel',
-      title: row.title || 'Untitled Event',
+      title: row.title || 'Untitled Content',
       theme: row.theme || row.description || '',
       productionNote: row.production_note || row.productionNote || null,
       audioNote: row.audio_note || row.audioNote || null,
       editNote: row.edit_note || row.editNote || null,
-      shotList: typeof row.shot_list === 'string' ? JSON.parse(row.shot_list) : (row.shot_list || row.shotList || null),
-      voiceover: typeof row.voiceover === 'string' ? JSON.parse(row.voiceover) : (row.voiceover || null),
-      textOptions: typeof row.text_options === 'string' ? JSON.parse(row.text_options) : (row.text_options || row.textOptions || null),
-      locationVersions: typeof row.location_versions === 'string' ? JSON.parse(row.location_versions) : (row.location_versions || row.locationVersions || null),
+      shotList: typeof row.shot_list === 'string' ? safeJsonParse(row.shot_list) : (row.shot_list || row.shotList || null),
+      voiceover: typeof row.voiceover === 'string' ? safeJsonParse(row.voiceover) : (row.voiceover || null),
+      textOptions: typeof row.text_options === 'string' ? safeJsonParse(row.text_options) : (row.text_options || row.textOptions || null),
+      locationVersions: typeof row.location_versions === 'string' ? safeJsonParse(row.location_versions) : (row.location_versions || row.locationVersions || null),
       caption: row.caption || '',
-      hashtags: Array.isArray(row.hashtags) ? row.hashtags : (typeof row.hashtags === 'string' ? row.hashtags.split(' ') : (row.hashtags || []))
+      hashtags: Array.isArray(row.hashtags) ? row.hashtags : (typeof row.hashtags === 'string' ? row.hashtags.split(' ').filter(Boolean) : (row.hashtags || []))
     };
   }
 
-  // Load / Fetch Events from Supabase Database safely without blocking UI
-  async function loadEventsFromSupabase() {
-    // 1. Instantly render default 9 items first so page is NEVER empty!
-    updateStats();
-    renderGrid();
-    checkUrlHash();
+  function safeJsonParse(str) {
+    try {
+      return JSON.parse(str);
+    } catch (e) {
+      return null;
+    }
+  }
 
-    if (!supabase) return;
+  // Load from Supabase in background without destroying local list
+  async function syncWithSupabase() {
+    if (!sbClient) return;
 
     try {
-      // Timeout controller to prevent hanging if URL fails to resolve
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-      const { data, error } = await supabase
+      const { data, error } = await sbClient
         .from('events')
         .select('*')
         .order('id', { ascending: true });
 
-      clearTimeout(timeoutId);
-
-      if (!error && data && data.length > 0) {
-        eventsList = data.map(normalizeEvent);
+      if (!error && data && Array.isArray(data) && data.length > 0) {
+        eventsList = data.map(normalizeEvent).filter(Boolean);
         updateStats();
         renderGrid();
         showToast('Synced with Supabase DB 🟢');
-      } else if (!error && data && data.length === 0) {
-        // Table exists but empty -> auto seed initial 9 items to Supabase!
-        seedInitialEventsToSupabase(eventsList);
       }
     } catch (err) {
-      console.log('Supabase connection deferred, showing local content calendar items:', err.message || err);
+      console.log('Using local content calendar mode:', err);
     }
   }
 
-  // Seed Initial Events to Supabase if table is fresh
-  async function seedInitialEventsToSupabase(initialItems) {
-    if (!supabase || !initialItems || initialItems.length === 0) return;
-    try {
-      const rowsToInsert = initialItems.map(item => ({
-        id: item.id,
-        number: item.number,
-        type: item.type,
-        title: item.title,
-        theme: item.theme,
-        production_note: item.productionNote || null,
-        audio_note: item.audioNote || null,
-        edit_note: item.editNote || null,
-        shot_list: item.shotList ? JSON.stringify(item.shotList) : null,
-        voiceover: item.voiceover ? JSON.stringify(item.voiceover) : null,
-        text_options: item.textOptions ? JSON.stringify(item.textOptions) : null,
-        location_versions: item.locationVersions ? JSON.stringify(item.locationVersions) : null,
-        caption: item.caption,
-        hashtags: item.hashtags
-      }));
+  /* ==========================================================================
+     CRUD OPERATIONS (Add, Update, Delete)
+     ========================================================================== */
 
-      await supabase.from('events').insert(rowsToInsert);
-    } catch (err) {
-      console.warn('Auto-seed to Supabase deferred:', err);
-    }
-  }
-
-  // Add Event to Supabase
-  async function addEventToSupabase(newEventData) {
+  async function addEvent(newEventData) {
     const nextId = eventsList.length > 0 ? Math.max(...eventsList.map(e => e.id || 0)) + 1 : 1;
     const formattedEvent = {
       id: nextId,
       number: newEventData.number || String(nextId).padStart(2, '0'),
-      type: newEventData.type,
-      title: newEventData.title,
-      theme: newEventData.theme,
-      caption: newEventData.caption,
-      hashtags: newEventData.hashtags
+      type: newEventData.type || 'Reel',
+      title: newEventData.title || 'New Content Piece',
+      theme: newEventData.theme || '',
+      caption: newEventData.caption || '',
+      hashtags: newEventData.hashtags || []
     };
 
     eventsList.push(formattedEvent);
     updateStats();
     renderGrid();
     closeFormModal();
+    showToast('Event added! ✨');
 
-    if (supabase) {
+    if (sbClient) {
       try {
-        const { data, error } = await supabase
-          .from('events')
-          .insert([{
-            number: formattedEvent.number,
-            type: formattedEvent.type,
-            title: formattedEvent.title,
-            theme: formattedEvent.theme,
-            caption: formattedEvent.caption,
-            hashtags: formattedEvent.hashtags
-          }])
-          .select();
-
-        if (error) {
-          showToast('Saved locally ✨');
-        } else if (data && data[0]) {
-          formattedEvent.id = data[0].id;
-          showToast('Event added to Supabase DB! ✨');
-        }
-      } catch (err) {
-        showToast('Saved locally ✨');
+        await sbClient.from('events').insert([{
+          number: formattedEvent.number,
+          type: formattedEvent.type,
+          title: formattedEvent.title,
+          theme: formattedEvent.theme,
+          caption: formattedEvent.caption,
+          hashtags: formattedEvent.hashtags
+        }]);
+      } catch (e) {
+        console.log('Supabase sync deferred for add:', e);
       }
-    } else {
-      showToast('Event added locally! ✨');
     }
   }
 
-  // Update Event in Supabase
-  async function updateEventInSupabase(id, updatedFields) {
+  async function updateEvent(id, updatedFields) {
     const index = eventsList.findIndex(e => e.id === id);
     if (index === -1) return;
 
@@ -201,38 +164,30 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStats();
     renderGrid();
     closeFormModal();
-    if (activeModalIndex !== null) openModal(index);
+    showToast('Event updated! 🔄');
 
-    if (supabase) {
+    if (activeModalIndex !== null) {
+      openModal(index);
+    }
+
+    if (sbClient) {
       try {
-        const { error } = await supabase
-          .from('events')
-          .update({
-            title: updatedFields.title,
-            type: updatedFields.type,
-            number: updatedFields.number,
-            theme: updatedFields.theme,
-            caption: updatedFields.caption,
-            hashtags: updatedFields.hashtags
-          })
-          .eq('id', id);
-
-        if (!error) {
-          showToast('Event updated in Supabase DB! 🔄');
-        } else {
-          showToast('Updated locally 🔄');
-        }
-      } catch (err) {
-        showToast('Updated locally 🔄');
+        await sbClient.from('events').update({
+          title: updatedFields.title,
+          type: updatedFields.type,
+          number: updatedFields.number,
+          theme: updatedFields.theme,
+          caption: updatedFields.caption,
+          hashtags: updatedFields.hashtags
+        }).eq('id', id);
+      } catch (e) {
+        console.log('Supabase sync deferred for update:', e);
       }
-    } else {
-      showToast('Event updated locally! 🔄');
     }
   }
 
-  // Delete Event from Supabase
-  async function deleteEventFromSupabase(id) {
-    if (!confirm('Are you sure you want to delete this content event?')) return;
+  async function deleteEvent(id) {
+    if (!confirm('Are you sure you want to delete this content piece?')) return;
 
     const index = eventsList.findIndex(e => e.id === id);
     if (index === -1) return;
@@ -241,54 +196,63 @@ document.addEventListener('DOMContentLoaded', () => {
     closeModal();
     updateStats();
     renderGrid();
+    showToast('Event deleted 🗑️');
 
-    if (supabase) {
+    if (sbClient) {
       try {
-        await supabase.from('events').delete().eq('id', id);
-        showToast('Event deleted 🗑️');
-      } catch (err) {
-        showToast('Event deleted locally');
+        await sbClient.from('events').delete().eq('id', id);
+      } catch (e) {
+        console.log('Supabase sync deferred for delete:', e);
       }
-    } else {
-      showToast('Event deleted locally');
     }
   }
 
   /* ==========================================================================
-     UI RENDERING & CONTROLLERS
+     UI RENDERING & EVENT CONTROLLERS
      ========================================================================== */
 
-  // Initialize Stats
   function updateStats() {
     const reels = eventsList.filter(item => item.type === 'Reel').length;
     const posts = eventsList.filter(item => item.type === 'Post').length;
     if (countAll) countAll.textContent = eventsList.length;
     if (countReels) countReels.textContent = reels;
     if (countPosts) countPosts.textContent = posts;
+
+    // Update filter tab labels
+    tabButtons.forEach(btn => {
+      const filter = btn.getAttribute('data-filter');
+      if (filter === 'all') btn.textContent = `All Content (${eventsList.length})`;
+      if (filter === 'reels') btn.textContent = `🎥 Reels (${reels})`;
+      if (filter === 'posts') btn.textContent = `📸 Posts (${posts})`;
+    });
   }
 
-  // Filter Data
   function getFilteredData() {
     return eventsList.filter(item => {
+      if (!item) return false;
       const matchesFilter = 
         currentFilter === 'all' || 
         (currentFilter === 'reels' && item.type === 'Reel') ||
         (currentFilter === 'posts' && item.type === 'Post');
 
       const query = currentSearchQuery.toLowerCase().trim();
-      const matchesSearch = !query || 
-        (item.title && item.title.toLowerCase().includes(query)) ||
-        (item.theme && item.theme.toLowerCase().includes(query)) ||
-        (item.caption && item.caption.toLowerCase().includes(query)) ||
-        (item.hashtags && item.hashtags.some(tag => tag.toLowerCase().includes(query))) ||
-        (item.shotList && item.shotList.some(shot => (shot.desc || shot).toLowerCase().includes(query)));
+      if (!query) return matchesFilter;
 
-      return matchesFilter && matchesSearch;
+      const titleMatch = item.title && item.title.toLowerCase().includes(query);
+      const themeMatch = item.theme && item.theme.toLowerCase().includes(query);
+      const captionMatch = item.caption && item.caption.toLowerCase().includes(query);
+      const hashtagMatch = item.hashtags && item.hashtags.some(tag => tag && tag.toLowerCase().includes(query));
+      const shotMatch = item.shotList && item.shotList.some(shot => {
+        const desc = typeof shot === 'string' ? shot : (shot.desc || shot.description || '');
+        return desc.toLowerCase().includes(query);
+      });
+
+      return matchesFilter && (titleMatch || themeMatch || captionMatch || hashtagMatch || shotMatch);
     });
   }
 
-  // Render Grid
   function renderGrid() {
+    if (!gridContainer) return;
     const items = getFilteredData();
     gridContainer.innerHTML = '';
 
@@ -305,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
     items.forEach(item => {
       const card = document.createElement('div');
       card.className = 'content-card';
-      card.setAttribute('data-type', item.type);
+      card.setAttribute('data-type', item.type || 'Reel');
       card.setAttribute('data-id', item.id);
 
       const shotCount = item.shotList ? item.shotList.length : 
@@ -319,8 +283,8 @@ document.addEventListener('DOMContentLoaded', () => {
           </span>
         </div>
         <div>
-          <h3 class="card-title">${item.title}</h3>
-          <p class="card-theme">${item.theme}</p>
+          <h3 class="card-title">${item.title || 'Untitled'}</h3>
+          <p class="card-theme">${item.theme || ''}</p>
         </div>
         <div class="card-footer">
           <span class="card-meta-tag">
@@ -340,7 +304,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Filter Buttons Event Listeners
+  // Filter Buttons
   tabButtons.forEach(btn => {
     btn.addEventListener('click', () => {
       tabButtons.forEach(b => b.classList.remove('active'));
@@ -350,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Search Input Event Listener
+  // Search Input
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       currentSearchQuery = e.target.value;
@@ -358,40 +322,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Open Detail Modal
+  // Detail Modal
   function openModal(dataIndex) {
     if (dataIndex < 0 || dataIndex >= eventsList.length) return;
     activeModalIndex = dataIndex;
     const item = eventsList[dataIndex];
 
-    // Set Header
-    modalIndexBadge.textContent = `CONTENT ${item.number || '01'} OF ${String(eventsList.length).padStart(2, '0')}`;
-    modalTypeBadge.textContent = item.type === 'Reel' ? '🎥 REEL' : '📸 POST';
-    modalTypeBadge.className = `card-badge ${item.type === 'Reel' ? 'badge-reel' : 'badge-post'}`;
-    modalTitle.textContent = item.title;
+    if (modalIndexBadge) modalIndexBadge.textContent = `CONTENT ${item.number || '01'} OF ${String(eventsList.length).padStart(2, '0')}`;
+    if (modalTypeBadge) {
+      modalTypeBadge.textContent = item.type === 'Reel' ? '🎥 REEL' : '📸 POST';
+      modalTypeBadge.className = `card-badge ${item.type === 'Reel' ? 'badge-reel' : 'badge-post'}`;
+    }
+    if (modalTitle) modalTitle.textContent = item.title;
 
-    // Attach Edit & Delete buttons
     if (modalEditBtn) modalEditBtn.onclick = () => openFormModal(item);
-    if (modalDeleteBtn) modalDeleteBtn.onclick = () => deleteEventFromSupabase(item.id);
+    if (modalDeleteBtn) modalDeleteBtn.onclick = () => deleteEvent(item.id);
 
-    // Render Body Sections
     let htmlContent = '';
 
-    // Theme & Notes
+    // Overview Section
     htmlContent += `
       <div class="modal-section">
         <div class="section-label">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
           CONCEPT OVERVIEW
         </div>
-        <p style="font-size: 1rem; color: var(--color-text-main); font-weight: 500; margin-bottom: 12px;">${item.theme}</p>
+        <p style="font-size: 1rem; color: var(--color-text-main); font-weight: 500; margin-bottom: 12px;">${item.theme || ''}</p>
         ${item.productionNote ? `<div class="note-box">${item.productionNote}</div>` : ''}
         ${item.audioNote ? `<div class="note-box terracotta"><strong>Audio Note:</strong> ${item.audioNote}</div>` : ''}
         ${item.editNote ? `<div class="note-box terracotta"><strong>Editing Sequence:</strong> ${item.editNote}</div>` : ''}
       </div>
     `;
 
-    // Shot List
+    // Shot List Section
     if (item.shotList && item.shotList.length > 0) {
       htmlContent += `
         <div class="modal-section">
@@ -411,7 +374,7 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    // Voiceover Script Table
+    // Voiceover Script Section
     if (item.voiceover && item.voiceover.length > 0) {
       htmlContent += `
         <div class="modal-section">
@@ -477,8 +440,8 @@ document.addEventListener('DOMContentLoaded', () => {
             EXECUTION CONCEPTS (CHOOSE ONE)
           </div>
           <div class="version-tabs">
-            <button class="ver-tab-btn active" id="ver-tab-orig" data-ver="orig">Original Concept (Multi-Location)</button>
-            <button class="ver-tab-btn" id="ver-tab-alt" data-ver="alt">Easier Alternate (Single-Location)</button>
+            <button class="ver-tab-btn active" id="ver-tab-orig">Original Concept (Multi-Location)</button>
+            <button class="ver-tab-btn" id="ver-tab-alt">Easier Alternate (Single-Location)</button>
           </div>
 
           <div id="ver-content-orig" class="ver-content">
@@ -574,14 +537,15 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    modalBody.innerHTML = htmlContent;
-    modalOverlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
+    if (modalBody) modalBody.innerHTML = htmlContent;
+    if (modalOverlay) {
+      modalOverlay.classList.add('active');
+      document.body.style.overflow = 'hidden';
+    }
 
-    // Hash sync
     window.location.hash = `content-${item.id}`;
 
-    // Attach Version Tab Listeners for Item 8
+    // Item 8 Version Tab events
     if (item.locationVersions) {
       const btnOrig = document.getElementById('ver-tab-orig');
       const btnAlt = document.getElementById('ver-tab-alt');
@@ -605,7 +569,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Attach Copy Listeners
+    // Copy buttons
     const copyCaptionBtn = document.getElementById('copy-caption-btn');
     if (copyCaptionBtn) {
       copyCaptionBtn.addEventListener('click', () => {
@@ -625,9 +589,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Close Detail Modal
   function closeModal() {
-    modalOverlay.classList.remove('active');
+    if (modalOverlay) modalOverlay.classList.remove('active');
     document.body.style.overflow = 'auto';
     activeModalIndex = null;
     history.pushState("", document.title, window.location.pathname + window.location.search);
@@ -663,27 +626,28 @@ document.addEventListener('DOMContentLoaded', () => {
      ========================================================================== */
 
   function openFormModal(editItem = null) {
+    if (!formModalOverlay) return;
     if (editItem) {
-      formModalTitle.textContent = `Edit Event #${editItem.number || editItem.id}`;
-      eventIdInput.value = editItem.id;
-      eventTitleInput.value = editItem.title || '';
-      eventTypeInput.value = editItem.type || 'Reel';
-      eventNumberInput.value = editItem.number || '';
-      eventThemeInput.value = editItem.theme || '';
-      eventCaptionInput.value = editItem.caption || '';
-      eventHashtagsInput.value = Array.isArray(editItem.hashtags) ? editItem.hashtags.join(' ') : (editItem.hashtags || '');
+      if (formModalTitle) formModalTitle.textContent = `Edit Event #${editItem.number || editItem.id}`;
+      if (eventIdInput) eventIdInput.value = editItem.id;
+      if (eventTitleInput) eventTitleInput.value = editItem.title || '';
+      if (eventTypeInput) eventTypeInput.value = editItem.type || 'Reel';
+      if (eventNumberInput) eventNumberInput.value = editItem.number || '';
+      if (eventThemeInput) eventThemeInput.value = editItem.theme || '';
+      if (eventCaptionInput) eventCaptionInput.value = editItem.caption || '';
+      if (eventHashtagsInput) eventHashtagsInput.value = Array.isArray(editItem.hashtags) ? editItem.hashtags.join(' ') : (editItem.hashtags || '');
     } else {
-      formModalTitle.textContent = 'Add New Content Event';
+      if (formModalTitle) formModalTitle.textContent = 'Add New Content Event';
       if (eventForm) eventForm.reset();
-      eventIdInput.value = '';
-      eventNumberInput.value = String(eventsList.length + 1).padStart(2, '0');
+      if (eventIdInput) eventIdInput.value = '';
+      if (eventNumberInput) eventNumberInput.value = String(eventsList.length + 1).padStart(2, '0');
     }
 
     formModalOverlay.classList.add('active');
   }
 
   function closeFormModal() {
-    formModalOverlay.classList.remove('active');
+    if (formModalOverlay) formModalOverlay.classList.remove('active');
   }
 
   if (addContentBtn) {
@@ -698,23 +662,23 @@ document.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       const id = eventIdInput.value ? parseInt(eventIdInput.value, 10) : null;
       const formData = {
-        title: eventTitleInput.value.trim(),
-        type: eventTypeInput.value,
-        number: eventNumberInput.value.trim() || '01',
-        theme: eventThemeInput.value.trim(),
-        caption: eventCaptionInput.value.trim(),
-        hashtags: eventHashtagsInput.value.trim().split(/\s+/).filter(Boolean)
+        title: eventTitleInput ? eventTitleInput.value.trim() : '',
+        type: eventTypeInput ? eventTypeInput.value : 'Reel',
+        number: (eventNumberInput && eventNumberInput.value.trim()) ? eventNumberInput.value.trim() : '01',
+        theme: eventThemeInput ? eventThemeInput.value.trim() : '',
+        caption: eventCaptionInput ? eventCaptionInput.value.trim() : '',
+        hashtags: eventHashtagsInput ? eventHashtagsInput.value.trim().split(/\s+/).filter(Boolean) : []
       };
 
       if (id) {
-        updateEventInSupabase(id, formData);
+        updateEvent(id, formData);
       } else {
-        addEventToSupabase(formData);
+        addEvent(formData);
       }
     });
   }
 
-  // Keyboard Navigation
+  // Keyboard navigation
   document.addEventListener('keydown', (e) => {
     if (modalOverlay && modalOverlay.classList.contains('active')) {
       if (e.key === 'Escape') closeModal();
@@ -752,7 +716,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 2500);
   }
 
-  // Handle URL Hash
   function checkUrlHash() {
     const hash = window.location.hash;
     if (hash.startsWith('#content-')) {
@@ -764,6 +727,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Initial Load (Renders 9 default items immediately & syncs with Supabase if online)
-  loadEventsFromSupabase();
+  // ==========================================
+  // INITIALIZE IMMEDIATELY & SYNC IN BACKGROUND
+  // ==========================================
+  updateStats();
+  renderGrid();
+  checkUrlHash();
+  syncWithSupabase();
 });
