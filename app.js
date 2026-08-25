@@ -1,45 +1,294 @@
 /**
  * Magishree Bagaicha Resort - Bhadra Content Calendar Controller
+ * Supabase Database Integration
  */
+
+// Initialize Supabase Client
+const SUPABASE_URL = 'https://giofettzlbggkustigyq.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_jeGM2mbAkaeKnU7H1RmP1g_kSAtpaFX';
+const supabase = (window.supabase && window.supabase.createClient) 
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) 
+  : null;
 
 document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
   const gridContainer = document.getElementById('content-grid');
   const searchInput = document.getElementById('search-input');
   const tabButtons = document.querySelectorAll('.filter-tabs .tab-btn');
-  
-  // Modal Elements
+  const addContentBtn = document.getElementById('add-content-btn');
+
+  // Modal Elements (Detail View)
   const modalOverlay = document.getElementById('modal-overlay');
   const modalCloseBtn = document.getElementById('modal-close');
   const modalPrevBtn = document.getElementById('modal-prev');
   const modalNextBtn = document.getElementById('modal-next');
+  const modalEditBtn = document.getElementById('modal-edit-btn');
+  const modalDeleteBtn = document.getElementById('modal-delete-btn');
   const modalBody = document.getElementById('modal-body-content');
   const modalIndexBadge = document.getElementById('modal-index-badge');
   const modalTypeBadge = document.getElementById('modal-type-badge');
   const modalTitle = document.getElementById('modal-title');
+
+  // Form Modal Elements (Add / Edit Event)
+  const formModalOverlay = document.getElementById('form-modal-overlay');
+  const formModalTitle = document.getElementById('form-modal-title');
+  const formModalClose = document.getElementById('form-modal-close');
+  const formCancelBtn = document.getElementById('form-cancel-btn');
+  const eventForm = document.getElementById('event-form');
+  const eventIdInput = document.getElementById('event-id');
+  const eventTitleInput = document.getElementById('event-title');
+  const eventTypeInput = document.getElementById('event-type');
+  const eventNumberInput = document.getElementById('event-number');
+  const eventThemeInput = document.getElementById('event-theme');
+  const eventCaptionInput = document.getElementById('event-caption');
+  const eventHashtagsInput = document.getElementById('event-hashtags');
 
   // Stats Counters
   const countAll = document.getElementById('count-all');
   const countReels = document.getElementById('count-reels');
   const countPosts = document.getElementById('count-posts');
 
-  // App State
+  // Application State
+  let eventsList = []; // Holds current list of events from Supabase or fallback
   let currentFilter = 'all';
   let currentSearchQuery = '';
-  let activeModalIndex = null; // Index in contentData array
+  let activeModalIndex = null; // Index in eventsList array
+
+  /* ==========================================================================
+     SUPABASE ASYNCHRONOUS DATABASE OPERATIONS (Load, Add, Update, Delete)
+     ========================================================================== */
+
+  // Normalize event record structure from DB
+  function normalizeEvent(row) {
+    return {
+      id: row.id,
+      number: row.number || row.num || (row.id ? String(row.id).padStart(2, '0') : '01'),
+      type: row.type || 'Reel',
+      title: row.title || 'Untitled Event',
+      theme: row.theme || row.description || '',
+      productionNote: row.production_note || row.productionNote || null,
+      audioNote: row.audio_note || row.audioNote || null,
+      editNote: row.edit_note || row.editNote || null,
+      shotList: typeof row.shot_list === 'string' ? JSON.parse(row.shot_list) : (row.shot_list || row.shotList || null),
+      voiceover: typeof row.voiceover === 'string' ? JSON.parse(row.voiceover) : (row.voiceover || null),
+      textOptions: typeof row.text_options === 'string' ? JSON.parse(row.text_options) : (row.text_options || row.textOptions || null),
+      locationVersions: typeof row.location_versions === 'string' ? JSON.parse(row.location_versions) : (row.location_versions || row.locationVersions || null),
+      caption: row.caption || '',
+      hashtags: Array.isArray(row.hashtags) ? row.hashtags : (typeof row.hashtags === 'string' ? row.hashtags.split(' ') : (row.hashtags || []))
+    };
+  }
+
+  // Load / Fetch Events from Supabase Database
+  async function loadEventsFromSupabase() {
+    gridContainer.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px;">
+        <p style="font-family: var(--font-serif); font-size: 1.25rem; color: var(--color-primary);">Loading events from Supabase...</p>
+      </div>
+    `;
+
+    if (!supabase) {
+      console.warn('Supabase client not initialized. Using local contentData fallback.');
+      eventsList = Array.isArray(contentData) ? [...contentData] : [];
+      updateStats();
+      renderGrid();
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .order('id', { ascending: true });
+
+      if (error) {
+        console.warn('Supabase query notice (falling back to initial dataset):', error.message);
+        eventsList = Array.isArray(contentData) ? [...contentData] : [];
+      } else if (data && data.length > 0) {
+        eventsList = data.map(normalizeEvent);
+        showToast('Synced with Supabase DB 🟢');
+      } else {
+        // Table exists but empty, seed with initial dataset
+        eventsList = Array.isArray(contentData) ? [...contentData] : [];
+        seedInitialEventsToSupabase(eventsList);
+      }
+    } catch (err) {
+      console.error('Error connecting to Supabase:', err);
+      eventsList = Array.isArray(contentData) ? [...contentData] : [];
+    }
+
+    updateStats();
+    renderGrid();
+    checkUrlHash();
+  }
+
+  // Seed Initial Events to Supabase if table is fresh
+  async function seedInitialEventsToSupabase(initialItems) {
+    if (!supabase) return;
+    try {
+      const rowsToInsert = initialItems.map(item => ({
+        id: item.id,
+        number: item.number,
+        type: item.type,
+        title: item.title,
+        theme: item.theme,
+        production_note: item.productionNote || null,
+        audio_note: item.audioNote || null,
+        edit_note: item.editNote || null,
+        shot_list: item.shotList || null,
+        voiceover: item.voiceover || null,
+        text_options: item.textOptions || null,
+        location_versions: item.locationVersions || null,
+        caption: item.caption,
+        hashtags: item.hashtags
+      }));
+
+      const { error } = await supabase.from('events').insert(rowsToInsert);
+      if (!error) {
+        console.log('Successfully seeded initial events to Supabase DB');
+      }
+    } catch (err) {
+      console.warn('Auto-seed to Supabase deferred:', err);
+    }
+  }
+
+  // Add Event to Supabase
+  async function addEventToSupabase(newEventData) {
+    const nextId = eventsList.length > 0 ? Math.max(...eventsList.map(e => e.id || 0)) + 1 : 1;
+    const formattedEvent = {
+      id: nextId,
+      number: newEventData.number || String(nextId).padStart(2, '0'),
+      type: newEventData.type,
+      title: newEventData.title,
+      theme: newEventData.theme,
+      caption: newEventData.caption,
+      hashtags: newEventData.hashtags
+    };
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('events')
+          .insert([{
+            number: formattedEvent.number,
+            type: formattedEvent.type,
+            title: formattedEvent.title,
+            theme: formattedEvent.theme,
+            caption: formattedEvent.caption,
+            hashtags: formattedEvent.hashtags
+          }])
+          .select();
+
+        if (error) {
+          console.error('Supabase add error:', error);
+          showToast('Saved locally (DB notice: ' + error.message + ')');
+        } else if (data && data[0]) {
+          formattedEvent.id = data[0].id;
+          showToast('Event added to Supabase DB! ✨');
+        }
+      } catch (err) {
+        console.error('Async add failed:', err);
+      }
+    } else {
+      showToast('Event added locally!');
+    }
+
+    eventsList.push(formattedEvent);
+    updateStats();
+    renderGrid();
+    closeFormModal();
+  }
+
+  // Update Event in Supabase
+  async function updateEventInSupabase(id, updatedFields) {
+    const index = eventsList.findIndex(e => e.id === id);
+    if (index === -1) return;
+
+    eventsList[index] = { ...eventsList[index], ...updatedFields };
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('events')
+          .update({
+            title: updatedFields.title,
+            type: updatedFields.type,
+            number: updatedFields.number,
+            theme: updatedFields.theme,
+            caption: updatedFields.caption,
+            hashtags: updatedFields.hashtags
+          })
+          .eq('id', id);
+
+        if (error) {
+          console.error('Supabase update error:', error);
+          showToast('Updated locally (DB notice: ' + error.message + ')');
+        } else {
+          showToast('Event updated in Supabase DB! 🔄');
+        }
+      } catch (err) {
+        console.error('Async update failed:', err);
+      }
+    } else {
+      showToast('Event updated locally!');
+    }
+
+    updateStats();
+    renderGrid();
+    closeFormModal();
+    if (activeModalIndex !== null) {
+      openModal(index);
+    }
+  }
+
+  // Delete Event from Supabase
+  async function deleteEventFromSupabase(id) {
+    if (!confirm('Are you sure you want to delete this content event?')) return;
+
+    const index = eventsList.findIndex(e => e.id === id);
+    if (index === -1) return;
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('events')
+          .delete()
+          .eq('id', id);
+
+        if (error) {
+          console.error('Supabase delete error:', error);
+          showToast('Deleted locally (DB notice: ' + error.message + ')');
+        } else {
+          showToast('Event deleted from Supabase DB 🗑️');
+        }
+      } catch (err) {
+        console.error('Async delete failed:', err);
+      }
+    } else {
+      showToast('Event deleted locally');
+    }
+
+    eventsList.splice(index, 1);
+    closeModal();
+    updateStats();
+    renderGrid();
+  }
+
+  /* ==========================================================================
+     UI RENDERING & CONTROLLERS
+     ========================================================================== */
 
   // Initialize Stats
   function updateStats() {
-    const reels = contentData.filter(item => item.type === 'Reel').length;
-    const posts = contentData.filter(item => item.type === 'Post').length;
-    if (countAll) countAll.textContent = contentData.length;
+    const reels = eventsList.filter(item => item.type === 'Reel').length;
+    const posts = eventsList.filter(item => item.type === 'Post').length;
+    if (countAll) countAll.textContent = eventsList.length;
     if (countReels) countReels.textContent = reels;
     if (countPosts) countPosts.textContent = posts;
   }
 
   // Filter Data
   function getFilteredData() {
-    return contentData.filter(item => {
+    return eventsList.filter(item => {
       const matchesFilter = 
         currentFilter === 'all' || 
         (currentFilter === 'reels' && item.type === 'Reel') ||
@@ -47,10 +296,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const query = currentSearchQuery.toLowerCase().trim();
       const matchesSearch = !query || 
-        item.title.toLowerCase().includes(query) ||
-        item.theme.toLowerCase().includes(query) ||
-        item.caption.toLowerCase().includes(query) ||
-        item.hashtags.some(tag => tag.toLowerCase().includes(query)) ||
+        (item.title && item.title.toLowerCase().includes(query)) ||
+        (item.theme && item.theme.toLowerCase().includes(query)) ||
+        (item.caption && item.caption.toLowerCase().includes(query)) ||
+        (item.hashtags && item.hashtags.some(tag => tag.toLowerCase().includes(query))) ||
         (item.shotList && item.shotList.some(shot => shot.desc.toLowerCase().includes(query)));
 
       return matchesFilter && matchesSearch;
@@ -79,11 +328,11 @@ document.addEventListener('DOMContentLoaded', () => {
       card.setAttribute('data-id', item.id);
 
       const shotCount = item.shotList ? item.shotList.length : 
-                       (item.locationVersions ? '2 Options' : 'Custom');
+                       (item.locationVersions ? '2 Options' : 'Brief');
 
       card.innerHTML = `
         <div class="card-top">
-          <span class="card-index">CONTENT ${item.number} OF 09</span>
+          <span class="card-index">CONTENT ${item.number || '01'} OF ${String(eventsList.length).padStart(2, '0')}</span>
           <span class="card-badge ${item.type === 'Reel' ? 'badge-reel' : 'badge-post'}">
             ${item.type === 'Reel' ? '🎥 REEL' : '📸 POST'}
           </span>
@@ -102,7 +351,7 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
 
       card.addEventListener('click', () => {
-        const indexInMainData = contentData.findIndex(d => d.id === item.id);
+        const indexInMainData = eventsList.findIndex(d => d.id === item.id);
         openModal(indexInMainData);
       });
 
@@ -128,17 +377,21 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Open Modal Function
+  // Open Detail Modal
   function openModal(dataIndex) {
-    if (dataIndex < 0 || dataIndex >= contentData.length) return;
+    if (dataIndex < 0 || dataIndex >= eventsList.length) return;
     activeModalIndex = dataIndex;
-    const item = contentData[dataIndex];
+    const item = eventsList[dataIndex];
 
     // Set Header
-    modalIndexBadge.textContent = `CONTENT ${item.number} OF 09`;
+    modalIndexBadge.textContent = `CONTENT ${item.number || '01'} OF ${String(eventsList.length).padStart(2, '0')}`;
     modalTypeBadge.textContent = item.type === 'Reel' ? '🎥 REEL' : '📸 POST';
     modalTypeBadge.className = `card-badge ${item.type === 'Reel' ? 'badge-reel' : 'badge-post'}`;
     modalTitle.textContent = item.title;
+
+    // Attach Edit & Delete buttons
+    modalEditBtn.onclick = () => openFormModal(item);
+    modalDeleteBtn.onclick = () => deleteEventFromSupabase(item.id);
 
     // Render Body Sections
     let htmlContent = '';
@@ -157,8 +410,8 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
-    // Shot List (Items 1-7, 9)
-    if (item.shotList) {
+    // Shot List
+    if (item.shotList && item.shotList.length > 0) {
       htmlContent += `
         <div class="modal-section">
           <div class="section-label">
@@ -168,8 +421,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="shot-list-grid">
             ${item.shotList.map(shot => `
               <div class="shot-item">
-                <span class="shot-number">${shot.num}</span>
-                <span class="shot-desc">${shot.desc}</span>
+                <span class="shot-number">${shot.num || shot.number || '•'}</span>
+                <span class="shot-desc">${shot.desc || shot.description || shot}</span>
               </div>
             `).join('')}
           </div>
@@ -177,13 +430,13 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    // Item 3: Voiceover Script Table
-    if (item.voiceover) {
+    // Voiceover Script Table
+    if (item.voiceover && item.voiceover.length > 0) {
       htmlContent += `
         <div class="modal-section">
           <div class="section-label">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            TIMED VOICEOVER SCRIPT (~20–23 SEC)
+            TIMED VOICEOVER SCRIPT
           </div>
           <div class="script-table-wrapper">
             <table class="script-table">
@@ -211,8 +464,8 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    // Item 5: On-Screen Text Options
-    if (item.textOptions) {
+    // On-Screen Text Options
+    if (item.textOptions && item.textOptions.length > 0) {
       htmlContent += `
         <div class="modal-section">
           <div class="section-label">
@@ -222,7 +475,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="text-options-grid">
             ${item.textOptions.map(opt => `
               <div class="text-option-card ${opt.isRecommended ? 'recommended' : ''}">
-                <div class="option-text">"${opt.text}"</div>
+                <div class="option-text">"${opt.text || opt}"</div>
                 ${opt.isRecommended ? '<span class="rec-badge">Recommended ⭐</span>' : ''}
               </div>
             `).join('')}
@@ -231,7 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    // Item 8: Multi-version Location Reveal (Original vs Alternate)
+    // Location Reveal Options (Item 8)
     if (item.locationVersions) {
       const orig = item.locationVersions.original;
       const alt = item.locationVersions.alternate;
@@ -249,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
           <div id="ver-content-orig" class="ver-content">
             <div class="note-box terracotta" style="margin-bottom:14px;">
-              <strong>Note:</strong> ${orig.note}
+              <strong>Note:</strong> ${orig ? orig.note : ''}
             </div>
             <div class="script-table-wrapper">
               <table class="script-table">
@@ -261,13 +514,13 @@ document.addEventListener('DOMContentLoaded', () => {
                   </tr>
                 </thead>
                 <tbody>
-                  ${orig.beats.map(b => `
+                  ${orig && orig.beats ? orig.beats.map(b => `
                     <tr>
                       <td style="font-weight:600; color:var(--color-primary);">${b.loc}</td>
                       <td><span class="time-badge">${b.time}</span></td>
                       <td style="color:var(--color-text-main);">${b.action}</td>
                     </tr>
-                  `).join('')}
+                  `).join('') : ''}
                 </tbody>
               </table>
             </div>
@@ -275,7 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
           <div id="ver-content-alt" class="ver-content" style="display:none;">
             <div class="note-box" style="margin-bottom:14px;">
-              <strong>Note:</strong> ${alt.note}
+              <strong>Note:</strong> ${alt ? alt.note : ''}
             </div>
             <div class="script-table-wrapper">
               <table class="script-table">
@@ -287,13 +540,13 @@ document.addEventListener('DOMContentLoaded', () => {
                   </tr>
                 </thead>
                 <tbody>
-                  ${alt.beats.map(b => `
+                  ${alt && alt.beats ? alt.beats.map(b => `
                     <tr>
                       <td style="font-weight:600; color:var(--color-primary);">${b.loc}</td>
                       <td><span class="time-badge">${b.time}</span></td>
                       <td style="color:var(--color-text-main);">${b.action}</td>
                     </tr>
-                  `).join('')}
+                  `).join('') : ''}
                 </tbody>
               </table>
             </div>
@@ -303,38 +556,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Caption Box
-    htmlContent += `
-      <div class="modal-section">
-        <div class="section-label">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          CAPTION (COPYABLE)
+    if (item.caption) {
+      htmlContent += `
+        <div class="modal-section">
+          <div class="section-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            CAPTION (COPYABLE)
+          </div>
+          <div class="caption-box">
+            <p class="caption-text">"${item.caption}"</p>
+            <button class="copy-btn" id="copy-caption-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Copy Caption
+            </button>
+          </div>
         </div>
-        <div class="caption-box">
-          <p class="caption-text">"${item.caption}"</p>
-          <button class="copy-btn" id="copy-caption-btn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            Copy Caption
-          </button>
-        </div>
-      </div>
-    `;
+      `;
+    }
 
     // SEO Keywords & Hashtags
-    htmlContent += `
-      <div class="modal-section">
-        <div class="section-label">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
-          HASHTAGS & SEO TAGS (${item.hashtags.length})
+    if (item.hashtags && item.hashtags.length > 0) {
+      htmlContent += `
+        <div class="modal-section">
+          <div class="section-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+            HASHTAGS & SEO TAGS (${item.hashtags.length})
+          </div>
+          <div class="hashtags-container">
+            ${item.hashtags.map(tag => `<span class="hashtag-pill">${tag}</span>`).join('')}
+          </div>
+          <button class="copy-btn" id="copy-hashtags-btn" style="margin-top:16px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy All Hashtags
+          </button>
         </div>
-        <div class="hashtags-container">
-          ${item.hashtags.map(tag => `<span class="hashtag-pill">${tag}</span>`).join('')}
-        </div>
-        <button class="copy-btn" id="copy-hashtags-btn" style="margin-top:16px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          Copy All Hashtags
-        </button>
-      </div>
-    `;
+      `;
+    }
 
     modalBody.innerHTML = htmlContent;
     modalOverlay.classList.add('active');
@@ -354,15 +611,15 @@ document.addEventListener('DOMContentLoaded', () => {
         btnOrig.addEventListener('click', () => {
           btnOrig.classList.add('active');
           btnAlt.classList.remove('active');
-          contentOrig.style.display = 'block';
-          contentAlt.style.display = 'none';
+          if (contentOrig) contentOrig.style.display = 'block';
+          if (contentAlt) contentAlt.style.display = 'none';
         });
 
         btnAlt.addEventListener('click', () => {
           btnAlt.classList.add('active');
           btnOrig.classList.remove('active');
-          contentAlt.style.display = 'block';
-          contentOrig.style.display = 'none';
+          if (contentAlt) contentAlt.style.display = 'block';
+          if (contentOrig) contentOrig.style.display = 'none';
         });
       }
     }
@@ -387,7 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Close Modal Function
+  // Close Detail Modal
   function closeModal() {
     modalOverlay.classList.remove('active');
     document.body.style.overflow = 'auto';
@@ -400,27 +657,86 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target === modalOverlay) closeModal();
   });
 
-  // Modal Nav Buttons
   modalPrevBtn.addEventListener('click', () => {
     if (activeModalIndex !== null) {
-      const prevIndex = (activeModalIndex - 1 + contentData.length) % contentData.length;
+      const prevIndex = (activeModalIndex - 1 + eventsList.length) % eventsList.length;
       openModal(prevIndex);
     }
   });
 
   modalNextBtn.addEventListener('click', () => {
     if (activeModalIndex !== null) {
-      const nextIndex = (activeModalIndex + 1) % contentData.length;
+      const nextIndex = (activeModalIndex + 1) % eventsList.length;
       openModal(nextIndex);
     }
   });
 
-  // Keyboard shortcut (Esc to close, Left/Right for nav)
+  /* ==========================================================================
+     FORM MODAL CONTROLLERS (ADD & EDIT)
+     ========================================================================== */
+
+  function openFormModal(editItem = null) {
+    if (editItem) {
+      formModalTitle.textContent = `Edit Event #${editItem.number || editItem.id}`;
+      eventIdInput.value = editItem.id;
+      eventTitleInput.value = editItem.title || '';
+      eventTypeInput.value = editItem.type || 'Reel';
+      eventNumberInput.value = editItem.number || '';
+      eventThemeInput.value = editItem.theme || '';
+      eventCaptionInput.value = editItem.caption || '';
+      eventHashtagsInput.value = Array.isArray(editItem.hashtags) ? editItem.hashtags.join(' ') : (editItem.hashtags || '');
+    } else {
+      formModalTitle.textContent = 'Add New Content Event';
+      eventForm.reset();
+      eventIdInput.value = '';
+      eventNumberInput.value = String(eventsList.length + 1).padStart(2, '0');
+    }
+
+    formModalOverlay.classList.add('active');
+  }
+
+  function closeFormModal() {
+    formModalOverlay.classList.remove('active');
+  }
+
+  if (addContentBtn) {
+    addContentBtn.addEventListener('click', () => openFormModal(null));
+  }
+
+  if (formModalClose) formModalClose.addEventListener('click', closeFormModal);
+  if (formCancelBtn) formCancelBtn.addEventListener('click', closeFormModal);
+
+  if (eventForm) {
+    eventForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const id = eventIdInput.value ? parseInt(eventIdInput.value, 10) : null;
+      const formData = {
+        title: eventTitleInput.value.trim(),
+        type: eventTypeInput.value,
+        number: eventNumberInput.value.trim() || '01',
+        theme: eventThemeInput.value.trim(),
+        caption: eventCaptionInput.value.trim(),
+        hashtags: eventHashtagsInput.value.trim().split(/\s+/).filter(Boolean)
+      };
+
+      if (id) {
+        updateEventInSupabase(id, formData);
+      } else {
+        addEventToSupabase(formData);
+      }
+    });
+  }
+
+  // Keyboard Navigation
   document.addEventListener('keydown', (e) => {
-    if (!modalOverlay.classList.contains('active')) return;
-    if (e.key === 'Escape') closeModal();
-    if (e.key === 'ArrowLeft') modalPrevBtn.click();
-    if (e.key === 'ArrowRight') modalNextBtn.click();
+    if (modalOverlay.classList.contains('active')) {
+      if (e.key === 'Escape') closeModal();
+      if (e.key === 'ArrowLeft') modalPrevBtn.click();
+      if (e.key === 'ArrowRight') modalNextBtn.click();
+    }
+    if (formModalOverlay.classList.contains('active') && e.key === 'Escape') {
+      closeFormModal();
+    }
   });
 
   // Toast Function
@@ -449,20 +765,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 2500);
   }
 
-  // Handle URL Hash on initial load
+  // Handle URL Hash
   function checkUrlHash() {
     const hash = window.location.hash;
     if (hash.startsWith('#content-')) {
       const id = parseInt(hash.replace('#content-', ''), 10);
-      const index = contentData.findIndex(item => item.id === id);
+      const index = eventsList.findIndex(item => item.id === id);
       if (index !== -1) {
         openModal(index);
       }
     }
   }
 
-  // Initialize
-  updateStats();
-  renderGrid();
-  checkUrlHash();
+  // Initial Load from Supabase DB
+  loadEventsFromSupabase();
 });
