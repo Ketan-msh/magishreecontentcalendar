@@ -127,7 +127,7 @@
 
   <!-- Add / Edit Event Form Modal -->
   <div class="modal-overlay" id="form-modal-overlay" aria-hidden="true" role="dialog">
-    <div class="modal-container" style="max-width: 650px;">
+    <div class="modal-container" style="max-width: 780px;">
       <div class="modal-header">
         <h2 class="modal-title" id="form-modal-title">Add New Content Event</h2>
         <button class="modal-close-btn" id="form-modal-close" title="Close">
@@ -135,40 +135,90 @@
         </button>
       </div>
       <div class="modal-body">
-        <form id="event-form" style="display: flex; flex-direction: column; gap: 16px;">
+        <form id="event-form" style="display: flex; flex-direction: column; gap: 20px;">
           <input type="hidden" id="event-id">
-          <div>
-            <label style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 6px; color: var(--color-primary);">Title *</label>
-            <input type="text" id="event-title" required class="search-input" style="width: 100%; border-radius: var(--radius-sm);" placeholder="e.g. Sunset Garden Reel">
-          </div>
-          <div style="display: flex; gap: 16px;">
-            <div style="flex: 1;">
-              <label style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 6px; color: var(--color-primary);">Type *</label>
-              <select id="event-type" required class="search-input" style="width: 100%; border-radius: var(--radius-sm);">
+          
+          <!-- Basic Info -->
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px;">
+            <div>
+              <label class="form-label">Title *</label>
+              <input type="text" id="event-title" required class="search-input form-field" placeholder="e.g. Sunset Garden Reel">
+            </div>
+            <div>
+              <label class="form-label">Type *</label>
+              <select id="event-type" required class="search-input form-field">
                 <option value="Reel">Reel 🎥</option>
                 <option value="Post">Post 📸</option>
               </select>
             </div>
-            <div style="flex: 1;">
-              <label style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 6px; color: var(--color-primary);">Content Number</label>
-              <input type="text" id="event-number" class="search-input" style="width: 100%; border-radius: var(--radius-sm);" placeholder="e.g. 10">
+            <div>
+              <label class="form-label">Content #</label>
+              <input type="text" id="event-number" class="search-input form-field" placeholder="e.g. 10">
             </div>
           </div>
+
           <div>
-            <label style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 6px; color: var(--color-primary);">Theme / Concept Description *</label>
-            <textarea id="event-theme" required class="search-input" style="width: 100%; height: 80px; border-radius: var(--radius-sm); font-family: var(--font-sans);" placeholder="One-line summary..."></textarea>
+            <label class="form-label">Theme / Concept Description *</label>
+            <textarea id="event-theme" required class="search-input form-field" style="height: 70px;" placeholder="One-line concept overview..."></textarea>
           </div>
+
+          <!-- Notes Section -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+            <div>
+              <label class="form-label">Production Note</label>
+              <input type="text" id="event-production-note" class="search-input form-field" placeholder="e.g. Shot from behind...">
+            </div>
+            <div>
+              <label class="form-label">Audio Note</label>
+              <input type="text" id="event-audio-note" class="search-input form-field" placeholder="e.g. Acoustic guitar track...">
+            </div>
+            <div>
+              <label class="form-label">Edit Note</label>
+              <input type="text" id="event-edit-note" class="search-input form-field" placeholder="e.g. Sequence 5 -> 1 -> 2...">
+            </div>
+          </div>
+
+          <!-- Shot List Builder -->
+          <div class="form-section-box">
+            <div class="form-section-header">
+              <span class="form-section-title">📷 SHOT LIST</span>
+              <button type="button" id="add-shot-row-btn" class="btn-subtle">+ Add Shot Line</button>
+            </div>
+            <div id="form-shots-container" class="form-rows-wrapper"></div>
+          </div>
+
+          <!-- Timed Voiceover Script Builder -->
+          <div class="form-section-box">
+            <div class="form-section-header">
+              <span class="form-section-title">🎙️ TIMED VOICEOVER SCRIPT</span>
+              <button type="button" id="add-voiceover-row-btn" class="btn-subtle">+ Add Voiceover Line</button>
+            </div>
+            <div id="form-voiceover-container" class="form-rows-wrapper"></div>
+          </div>
+
+          <!-- On-Screen Text Options Builder -->
+          <div class="form-section-box">
+            <div class="form-section-header">
+              <span class="form-section-title">🔤 ON-SCREEN TEXT OPTIONS</span>
+              <button type="button" id="add-text-option-row-btn" class="btn-subtle">+ Add Text Option</button>
+            </div>
+            <div id="form-text-options-container" class="form-rows-wrapper"></div>
+          </div>
+
+          <!-- Caption & Hashtags -->
           <div>
-            <label style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 6px; color: var(--color-primary);">Caption</label>
-            <textarea id="event-caption" class="search-input" style="width: 100%; height: 80px; border-radius: var(--radius-sm); font-family: var(--font-sans);" placeholder="Post or reel caption text..."></textarea>
+            <label class="form-label">Caption</label>
+            <textarea id="event-caption" class="search-input form-field" style="height: 75px;" placeholder="Post or reel caption text..."></textarea>
           </div>
+
           <div>
-            <label style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 6px; color: var(--color-primary);">Hashtags (space separated)</label>
-            <input type="text" id="event-hashtags" class="search-input" style="width: 100%; border-radius: var(--radius-sm);" placeholder="#MagishreeResort #Godavari #Nepal">
+            <label class="form-label">Hashtags & SEO Tags (space or comma separated)</label>
+            <input type="text" id="event-hashtags" class="search-input form-field" placeholder="#MagishreeResort #Godavari #Nepal">
           </div>
+
           <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 10px;">
             <button type="button" id="form-cancel-btn" class="tab-btn">Cancel</button>
-            <button type="submit" id="form-submit-btn" class="tab-btn" style="background-color: var(--color-primary); color: #FFF;">Save to Supabase</button>
+            <button type="submit" id="form-submit-btn" class="tab-btn" style="background-color: var(--color-primary); color: #FFF;">Save Content Item</button>
           </div>
         </form>
       </div>
